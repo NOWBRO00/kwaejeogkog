@@ -7,257 +7,262 @@ import numpy as np
 import datetime
 import time
 
-# config.py에서 모든 설정값 로드
-from config import * # --- Firebase 초기화 ---
+# --- 1. 설정 및 상수 정의 ---
 try:
-    # 이미 앱이 초기화되어 있는지 확인
+    from config import *
+except ImportError:
+    SERVICE_ACCOUNT_KEY = 'serviceAccountKey.json'
+    FIREBASE_URL = 'https://YOUR_PROJECT_ID.firebaseio.com/'
+    MODEL_PATH = 'yolov8n.onnx' 
+    CLASSES_FILE = 'coco.names'
+    CONFIRM_FRAMES = 5
+
+# 인식 민감도 설정 (물건은 낮게 설정하여 민감하게 반응)
+CONFIDENCE_PERSON = 0.60 
+CONFIDENCE_ITEM = 0.25   
+
+if 'ITEM_CLASSES' not in globals():
+    ITEM_CLASSES = ["backpack", "handbag", "suitcase", "book", "laptop", "cell phone", "tablet", "mouse", "keyboard"]
+
+if 'TARGET_CLASSES' not in globals():
+    TARGET_CLASSES = ["person"] + ITEM_CLASSES
+
+# [수정 1] 유령 좌석 테스트를 위해 '초' 단위로 변경 (10초)
+GHOST_TIME_THRESHOLD_SECONDS = 10 
+
+# [수정 2] 색상 정의 (BGR 형식)
+COLOR_PERSON_BB = (255, 0, 0)    # 파란색 (사람 박스)
+COLOR_ITEM_BB = (0, 165, 255)    # 주황색 (물건 박스)
+
+COLOR_OCCUPIED = (0, 0, 255)     # 빨강 (좌석: 사용중)
+COLOR_VACANT = (0, 255, 0)       # 초록 (좌석: 공석)
+COLOR_GHOST = (0, 165, 255)      # 주황 (좌석: 유령) - 물건 색과 맞춤
+
+
+# --- 2. Firebase 초기화 ---
+try:
     if not firebase_admin._apps:
         cred = credentials.Certificate(SERVICE_ACCOUNT_KEY)
         firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
     
-    # 프로그램 시작 시 시스템 상태 'online'으로 설정
     status_ref = db.reference('system_status')
-    status_ref.update({
-        'connection': 'online',
-        'last_boot': str(datetime.datetime.now())
-    })
+    status_ref.update({'connection': 'online', 'last_boot': str(datetime.datetime.now())})
 
     def on_exit():
-        """프로그램 종료 시 실행되어 시스템 상태를 'offline'으로 변경합니다."""
-        print("프로그램을 종료하며 상태를 'offline'으로 변경합니다.")
+        print("프로그램 종료 -> Offline 전환")
         status_ref.update({'connection': 'offline'})
 
     atexit.register(on_exit)
-    print("Firebase 연결 성공")
+    print(">> Firebase 연결 성공")
 
 except Exception as e:
-    print(f"Firebase 연결 오류: {e}")
-    # exit() # 실제 환경에서는 주석 해제 권장
+    print(f">> Firebase 오류 (무시 가능): {e}")
 
 
-# --- 전역 변수 설정 ---
-drawing = False          # ROI 그리기 상태
-start_point = (-1, -1)   # ROI 시작 좌표
-rois = []                # 저장된 ROI 영역 리스트
+# --- 3. 전역 변수 ---
+drawing = False          
+start_point = (-1, -1)   
+rois = []                
 frame = None
-seat_statuses = {}       # 현재 좌석 상태 (메모리 상의 상태)
-seat_counters = {}       # 상태 변경 지연을 위한 카운터
-ghost_timers = {}        # 유령 좌석 타이머
-fps_update_counter = 0   # FPS Firebase 전송 주기 관리용
+seat_statuses = {}       
+seat_counters = {}       
+ghost_timers = {}        
+fps_update_counter = 0   
 
-# --- AI 모델 및 클래스 이름 로드 ---
+
+# --- 4. AI 모델 로드 ---
 try:
     net = cv2.dnn.readNet(MODEL_PATH)
-    
-    # [수정됨] 오류 방지를 위해 무조건 CPU 모드로 설정
-    print("CPU 모드로 AI 모델을 설정합니다.")
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    
-    print("AI 모델(YOLO)을 성공적으로 불러왔습니다.")
+    print(f">> AI 모델 로드 완료: {MODEL_PATH}")
     
     with open(CLASSES_FILE, "r") as f:
         classes = [line.strip() for line in f.readlines()]
     
     TARGET_CLASS_IDS = [classes.index(name) for name in TARGET_CLASSES if name in classes]
-    print(f"탐지 대상: {TARGET_CLASSES}")
 
 except Exception as e:
-    print(f"모델 로드 중 치명적 오류 발생: {e}")
+    print(f"모델 로드 오류: {e}")
     exit()
 
 
-# --- 함수 정의 ---
+# --- 5. 함수 정의 ---
 
 def draw_rectangle(event, x, y, flags, param):
-    """마우스로 좌석 영역(ROI)을 그리는 콜백 함수"""
+    """마우스로 좌석 그리기"""
     global start_point, drawing, rois, frame
-
     if event == cv2.EVENT_LBUTTONDOWN:
         drawing = True
         start_point = (x, y)
     elif event == cv2.EVENT_MOUSEMOVE:
         if drawing and frame is not None:
             temp_frame = frame.copy()
-            # 기존 ROI 그리기
-            for idx, roi in enumerate(rois):
+            for roi in rois:
                 cv2.rectangle(temp_frame, tuple(roi[0]), tuple(roi[1]), COLOR_VACANT, 2)
-            # 현재 그리고 있는 사각형 표시
             cv2.rectangle(temp_frame, start_point, (x, y), (0, 200, 0), 2)
             cv2.imshow('Live Cam', temp_frame)
     elif event == cv2.EVENT_LBUTTONUP:
         drawing = False
         end_point = (x, y)
-        # 좌표 정규화 (왼쪽 상단, 오른쪽 하단 순서로 맞춤)
-        x1, y1 = start_point
-        x2, y2 = end_point
-        norm_start_point = (min(x1, x2), min(y1, y2))
-        norm_end_point = (max(x1, x2), max(y1, y2))
-        
-        # 너무 작은 영역은 무시
-        if (norm_end_point[0] - norm_start_point[0] > 10) and (norm_end_point[1] - norm_start_point[1] > 10):
-            rois.append([norm_start_point, norm_end_point])
-            print(f"좌석 영역 추가됨: {norm_start_point} ~ {norm_end_point}")
-
+        norm_start = (min(start_point[0], end_point[0]), min(start_point[1], end_point[1]))
+        norm_end = (max(start_point[0], end_point[0]), max(start_point[1], end_point[1]))
+        if (norm_end[0] - norm_start[0] > 10) and (norm_end[1] - norm_start[1] > 10):
+            rois.append([norm_start, norm_end])
+            print(f"좌석 추가됨: {norm_start} ~ {norm_end}")
 
 def load_rois():
-    """저장된 ROI 설정 파일을 불러옵니다."""
     global rois, seat_statuses, seat_counters, ghost_timers
     try:
-        with open(CONFIG_FILE, 'r') as f:
+        with open('seats_config.json', 'r') as f:
             loaded = json.load(f)
             rois = [[tuple(pt1), tuple(pt2)] for pt1, pt2 in loaded]
-        print(f"저장된 좌석 영역 {len(rois)}개를 불러왔습니다.")
-        
-        # 변수 초기화
+        print(f">> 좌석 {len(rois)}개 로드됨")
         for i in range(len(rois)):
-            seat_id = f'seat{i+1}'
-            seat_statuses[seat_id] = 'Vacant'
-            seat_counters[seat_id] = 0
-            ghost_timers[seat_id] = None
-            
+            sid = f'seat{i+1}'
+            seat_statuses[sid] = 'Vacant'
+            seat_counters[sid] = 0
+            ghost_timers[sid] = None 
     except FileNotFoundError:
         rois = []
-        print("설정 파일이 없습니다. 새로운 좌석 영역을 지정해주세요.")
-
+        print(">> 설정 파일 없음. 마우스로 좌석을 그려주세요!")
 
 def apply_ghost_logic(seat_id, is_person_present, are_items_present):
-    """사람과 물건 유무에 따른 좌석 상태(Occupied, Ghost, Vacant) 판별 로직"""
     global ghost_timers, seat_statuses
-
     current_time = datetime.datetime.now()
-    current_status = seat_statuses.get(seat_id, 'Vacant')
-
+    
     if is_person_present:
-        # 사람이 있으면 무조건 점유 상태 & 타이머 리셋
         ghost_timers[seat_id] = None
         return 'Occupied'
     else:
         if are_items_present:
-            # 사람은 없고 물건만 있는 경우
+            # 사람은 없고 물건만 있는 경우 -> 유령 좌석 타이머 시작
             if ghost_timers[seat_id] is None:
-                ghost_timers[seat_id] = current_time
+                ghost_timers[seat_id] = current_time 
             
-            time_elapsed = current_time - ghost_timers[seat_id]
-            
-            # 설정된 시간(분)을 초과했는지 확인
-            if time_elapsed.total_seconds() > GHOST_TIME_THRESHOLD_MINUTES * 60:
-                return 'Ghost'
+            elapsed = current_time - ghost_timers[seat_id]
+            # [수정] 10초(Seconds) 기준으로 판단
+            if elapsed.total_seconds() > GHOST_TIME_THRESHOLD_SECONDS:
+                return 'Ghost' 
             else:
-                # 아직 시간이 안 지났으면 기존 상태 유지
-                if current_status == 'Occupied':
-                    return 'Occupied' 
-                return current_status 
+                return 'Occupied' 
         else:
-            # 사람도 없고 물건도 없음
             ghost_timers[seat_id] = None
             return 'Vacant'
 
 
-# --- 메인 프로그램 시작 ---
+# --- 6. 메인 루프 ---
 load_rois()
-cap = cv2.VideoCapture(0) # 웹캠 인덱스 (필요시 변경)
+cap = cv2.VideoCapture(0)
 cv2.namedWindow('Live Cam')
-cv2.setMouseCallback('Live Cam', draw_rectangle)
+cv2.setMouseCallback('Live Cam', draw_rectangle) 
 
-print("\n--- 스마트 도서관 좌석 관리 시스템 (AI Ver.) ---")
-print(f"유령 좌석 임계 시간: {GHOST_TIME_THRESHOLD_MINUTES}분")
-print("1. 마우스 드래그: 좌석 영역 지정")
-print("S: 저장 | C: 초기화 | Q: 종료")
-print("-------------------------------------------------")
+print("\n--- 시스템 시작 (Test Mode) ---")
+print(f"감지 대상: {TARGET_CLASSES}")
+print(f"유령좌석 기준: {GHOST_TIME_THRESHOLD_SECONDS}초 (테스트용)")
+print(f"색상설정 -> 사람: 파랑, 물건: 주황")
+print("---------------------------------------")
 
 while True:
     start_frame_time = time.time()
     ret, frame = cap.read()
-    if not ret:
-        print("웹캠 신호를 받을 수 없습니다.")
-        break
+    if not ret: break
 
-    # --- 1. AI 입력 전처리 및 추론 ---
-    [height, width, _] = frame.shape
-    length = max((height, width))
-    image = np.zeros((length, length, 3), np.uint8)
-    image[0:height, 0:width] = frame
-    scale = length / 640
-
-    inference_start = time.time()
-    blob = cv2.dnn.blobFromImage(image, scalefactor=1 / 255, size=(640, 640), swapRB=True)
+    frame_height, frame_width, _ = frame.shape
+    
+    # YOLOv8 표준 입력 (640x640)
+    blob = cv2.dnn.blobFromImage(frame, 1/255.0, (640, 640), swapRB=True, crop=False)
     net.setInput(blob)
     
-    # [오류 발생 지점 수정됨] Backend가 CPU로 설정되어 안전함
+    inference_start = time.time()
     outputs = net.forward()
-    
-    inference_end = time.time()
-    inference_time = (inference_end - inference_start) * 1000  # ms 단위
+    inference_time = (time.time() - inference_start) * 1000
 
-    # --- 2. AI 출력 해석 (NMS 적용) ---
-    outputs = np.array([cv2.transpose(outputs[0])])
-    rows = outputs.shape[1]
-    boxes, scores, class_ids = [], [], []
+    outputs = np.transpose(outputs, (0, 2, 1)) 
+    rows = outputs[0].shape[0] 
+
+    boxes = []
+    scores = []
+    class_ids = []
+
+    x_factor = frame_width / 640
+    y_factor = frame_height / 640
 
     for i in range(rows):
         classes_scores = outputs[0][i][4:]
-        (minScore, maxScore, minClassLoc, (x, maxClassIndex)) = cv2.minMaxLoc(classes_scores)
-        if maxScore >= CONFIDENCE_THRESHOLD and maxClassIndex in TARGET_CLASS_IDS:
-            scores.append(maxScore)
-            class_ids.append(maxClassIndex)
-            box = [
-                outputs[0][i][0] - (0.5 * outputs[0][i][2]),
-                outputs[0][i][1] - (0.5 * outputs[0][i][3]),
-                outputs[0][i][2],
-                outputs[0][i][3]
-            ]
-            boxes.append(box)
+        minScore, maxScore, minClassLoc, (x_idx, maxClassIndex) = cv2.minMaxLoc(classes_scores)
 
-    indices = cv2.dnn.NMSBoxes(boxes, scores, CONFIDENCE_THRESHOLD, 0.45)
+        current_class_name = classes[maxClassIndex]
+        
+        # 민감도 설정
+        threshold = CONFIDENCE_ITEM 
+        if current_class_name == 'person':
+            threshold = CONFIDENCE_PERSON
 
-    # --- 3. 감지된 객체와 좌석 매칭 ---
+        if maxScore >= threshold:
+            if maxClassIndex in TARGET_CLASS_IDS:
+                x, y, w, h = outputs[0][i][0], outputs[0][i][1], outputs[0][i][2], outputs[0][i][3]
+                
+                left = int((x - w / 2) * x_factor)
+                top = int((y - h / 2) * y_factor)
+                width = int(w * x_factor)
+                height = int(h * y_factor)
+                
+                boxes.append([left, top, width, height])
+                scores.append(float(maxScore))
+                class_ids.append(maxClassIndex)
+
+    indices = cv2.dnn.NMSBoxes(boxes, scores, CONFIDENCE_ITEM, 0.45)
+
     detected_person_seats = set()
     detected_item_seats = set()
 
     if len(indices) > 0:
         for i in indices.flatten():
             class_id = class_ids[i]
-            left, top, w, h = [int(val * scale) for val in boxes[i]]
+            box = boxes[i]
+            left, top, w, h = box
+            
             center_x = left + w // 2
             center_y = top + h // 2
             class_name = classes[class_id]
 
             is_person = (class_name == 'person')
-            
-            # 화면에 바운딩 박스 그리기
-            color_bb = COLOR_PERSON_BB if is_person else COLOR_ITEM_BB
-            cv2.rectangle(frame, (left, top), (left + w, top + h), color_bb, 2)
-            cv2.putText(frame, class_name, (left, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bb, 2)
+            is_item = (class_name in ITEM_CLASSES)
 
-            # 좌석 ROI 안에 중심점이 있는지 확인
+            # [수정] 박스 색상 적용 (사람:파랑, 물건:주황)
+            color_bb = COLOR_PERSON_BB if is_person else COLOR_ITEM_BB
+            
+            cv2.rectangle(frame, (left, top), (left + w, top + h), color_bb, 2)
+            cv2.putText(frame, f"{class_name} {scores[i]:.2f}", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bb, 2)
+
             for j, roi in enumerate(rois):
                 seat_id = f'seat{j+1}'
                 roi_start, roi_end = tuple(roi[0]), tuple(roi[1])
+                
                 if (roi_start[0] <= center_x <= roi_end[0]) and (roi_start[1] <= center_y <= roi_end[1]):
                     if is_person:
                         detected_person_seats.add(seat_id)
-                    else:
+                    elif is_item:
                         detected_item_seats.add(seat_id)
-                    break # 한 객체는 한 좌석에만 속함
+                    break 
 
-    # --- 4. 좌석 상태 판별 및 Firebase 업데이트 ---
+    # 상태 업데이트
     current_loop_statuses = seat_statuses.copy()
     status_changed = False 
 
     for i, roi in enumerate(rois):
         seat_id = f'seat{i+1}'
-        
         if seat_id not in seat_statuses:
             seat_statuses[seat_id] = 'Vacant'
             seat_counters[seat_id] = 0
             ghost_timers[seat_id] = None
 
-        is_person = seat_id in detected_person_seats
-        is_item = seat_id in detected_item_seats
+        is_p = seat_id in detected_person_seats
+        is_i = seat_id in detected_item_seats
         
-        target_status = apply_ghost_logic(seat_id, is_person, is_item)
-
+        target_status = apply_ghost_logic(seat_id, is_p, is_i)
+        
         counter = seat_counters.get(seat_id, 0)
         if target_status == 'Occupied':
             counter = min(counter + 1, CONFIRM_FRAMES)
@@ -265,15 +270,13 @@ while True:
             counter = max(counter - 1, -CONFIRM_FRAMES)
         
         seat_counters[seat_id] = counter
-
         final_status = seat_statuses[seat_id]
-        if counter >= CONFIRM_FRAMES:
-            final_status = 'Occupied'
-        elif counter <= -CONFIRM_FRAMES:
-            final_status = target_status 
+
+        if counter >= CONFIRM_FRAMES: final_status = 'Occupied'
+        elif counter <= -CONFIRM_FRAMES: final_status = target_status 
         
         if current_loop_statuses.get(seat_id) != final_status:
-            print(f"상태 변경 감지: {seat_id} -> {final_status}")
+            print(f"상태 변경: {seat_id} -> {final_status}")
             status_changed = True
             current_loop_statuses[seat_id] = final_status
 
@@ -287,72 +290,52 @@ while True:
                     'last_updated': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
             db.reference('seats').update(firebase_seat_data)
-            print(">> Firebase seats 업데이트 완료")
         except Exception as e:
-            print(f"Firebase seats 업데이트 실패: {e}")
+            print(f"DB 업데이트 실패: {e}")
 
-    # --- 5. 화면 표시 및 시스템 상태 전송 ---
-    end_frame_time = time.time()
-    fps = 1 / (end_frame_time - start_frame_time) if (end_frame_time - start_frame_time) > 0 else 0
-
+    # UI 그리기
+    fps = 1 / (time.time() - start_frame_time)
     fps_update_counter += 1
     if fps_update_counter >= 30:
-        try:
-            sys_data = {
-                'connection': 'online',
-                'fps': float(f"{fps:.2f}"),
-                'inference_ms': float(f"{inference_time:.2f}"),
-                'last_update': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            db.reference('system_status').update(sys_data)
-            fps_update_counter = 0
-        except Exception as e:
-            print(f"시스템 상태 전송 실패: {e}")
-            fps_update_counter = 0
+        try: db.reference('system_status').update({'fps': float(f"{fps:.1f}"), 'inference_ms': float(f"{inference_time:.1f}")})
+        except: pass
+        fps_update_counter = 0
 
-    # 화면 그리기
     for i, roi in enumerate(rois):
         seat_id = f'seat{i+1}'
         status = seat_statuses.get(seat_id, 'Vacant')
         
-        if status == "Occupied":
-            color = COLOR_OCCUPIED
-        elif status == "Ghost":
-            color = COLOR_GHOST
-        else:
-            color = COLOR_VACANT
+        if status == "Occupied": color = COLOR_OCCUPIED
+        elif status == "Ghost": color = COLOR_GHOST
+        else: color = COLOR_VACANT 
 
         cv2.rectangle(frame, tuple(roi[0]), tuple(roi[1]), color, 2)
         
-        label = f"seat {i+1}"
-        cv2.putText(frame, label, (roi[0][0], roi[0][1] - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        status_label = f"[{status}]"
-        cv2.putText(frame, status_label, (roi[0][0], roi[0][1] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.rectangle(frame, (roi[0][0], roi[0][1] - 40), (roi[0][0] + 100, roi[0][1]), (0,0,0), -1)
+        cv2.putText(frame, f"Seat {i+1}", (roi[0][0], roi[0][1] - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+        cv2.putText(frame, f"[{status}]", (roi[0][0], roi[0][1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        if status == 'Ghost' and ghost_timers.get(seat_id):
-            time_since_item = datetime.datetime.now() - ghost_timers[seat_id]
-            minutes = int(time_since_item.total_seconds() // 60)
-            seconds = int(time_since_item.total_seconds() % 60)
-            time_str = f"Ghost: {minutes:02d}:{seconds:02d}"
-            cv2.putText(frame, time_str, (roi[0][0], roi[0][1] + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        if ghost_timers.get(seat_id) is not None:
+            elapsed = datetime.datetime.now() - ghost_timers[seat_id]
+            mins, secs = divmod(elapsed.total_seconds(), 60)
+            time_str = f"Wait: {int(mins):02d}:{int(secs):02d}"
+            t_color = (0, 0, 255) if status == 'Ghost' else (255, 255, 255)
+            
+            cv2.rectangle(frame, (roi[0][0], roi[1][1]), (roi[0][0] + 110, roi[1][1] + 25), (0,0,0), -1)
+            cv2.putText(frame, time_str, (roi[0][0] + 5, roi[1][1] + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, t_color, 1)
 
-    cv2.putText(frame, f"FPS: {fps:.2f} | Inf: {inference_time:.1f}ms", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    
+    cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     cv2.imshow('Live Cam', frame)
 
     key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
-        break
+    if key == ord('q'): break
     elif key == ord('s'):
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(rois, f)
-        print(f"설정 저장 완료: {CONFIG_FILE}")
+        with open('seats_config.json', 'w') as f: json.dump(rois, f)
+        print(">> 설정 저장 완료")
     elif key == ord('c'):
         rois = []
-        seat_statuses = {}
-        seat_counters = {}
         db.reference('seats').set({})
-        print("설정 초기화 완료")
+        print(">> 초기화 완료")
 
 cap.release()
 cv2.destroyAllWindows()
