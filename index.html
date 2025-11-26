@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>쾌적콕! 스마트 도서관 통합 현황 (HMI Tier)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .Ghost { background-color: #ff9800; }
+        .seat:hover .seat-info { opacity: 1; transform: translateY(0); }
+        .seat-info { transition: opacity 0.3s ease, transform 0.3s ease; }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { 'occupied': '#dc3545', 'vacant': '#28a745', 'ghost': '#ff9800' },
+                    animation: { pulse_slow: 'pulse_slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' },
+                    keyframes: { pulse_slow: { '0%, 100%': { opacity: 1 }, '50%': { opacity: 0.5 } } }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 p-4 md:p-8">
+    <div class="max-w-6xl mx-auto space-y-8">
+        <h1 class="text-3xl font-extrabold text-gray-800 text-center mb-6">쾌적콕! 스마트 도서관 통합 현황 (HMI Tier)</h1>
+
+        <div id="global-status" class="bg-white p-4 rounded-xl shadow-lg border border-gray-100 flex flex-wrap justify-around items-center text-center text-sm md:text-base">
+            <div class="status-box flex items-center space-x-2 w-1/2 md:w-auto opacity-50">
+                <div class="font-medium">정숙도: <span id="global-noise" class="font-bold text-gray-700">통합 대기</span></div>
+            </div>
+            <div class="status-box flex items-center space-x-2 w-1/2 md:w-auto opacity-50">
+                <div class="font-medium">쾌적 상태: <span id="global-temp" class="font-bold text-gray-700">통합 대기</span></div>
+            </div>
+            <div class="status-box flex items-center space-x-2 w-1/2 md:w-auto">
+                <div class="font-medium">FPS: <span id="fps" class="font-bold text-blue-600">0.0</span></div>
+            </div>
+            <div class="status-box flex items-center space-x-2 w-1/2 md:w-auto">
+                <div class="font-medium">추론 지연: <span id="inference-ms" class="font-bold text-purple-600">0.0 ms</span></div>
+            </div>
+        </div>
+        
+        <div id="stats" class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="stat-item p-3 rounded-lg bg-gray-50">
+                <div class="label text-gray-500 text-sm">총 좌석</div>
+                <div class="value text-2xl font-extrabold text-gray-800" id="total-seats">0</div>
+            </div>
+            <div class="stat-item p-3 rounded-lg bg-red-50">
+                <div class="label text-gray-500 text-sm">사용 중</div>
+                <div class="value text-2xl font-extrabold text-occupied" id="occupied-seats">0</div>
+            </div>
+            <div class="stat-item p-3 rounded-lg bg-green-50">
+                <div class="label text-gray-500 text-sm">잔여 좌석</div>
+                <div class="value text-2xl font-extrabold text-vacant" id="vacant-seats">0</div>
+            </div>
+             <div class="stat-item p-3 rounded-lg bg-amber-50 border-2 border-amber-600 animate-pulse_slow">
+                <div class="label text-amber-700 text-sm font-bold">유령 좌석 (AI)</div>
+                <div class="value text-2xl font-extrabold text-ghost" id="ghost-seats">0</div>
+            </div>
+            <div class="stat-item p-3 rounded-lg bg-blue-50">
+                <div class="label text-gray-500 text-sm">점유율</div>
+                <div class="value text-2xl font-extrabold text-blue-600" id="occupancy-rate">0%</div>
+            </div>
+        </div>
+
+        <div id="seat-map" class="bg-white p-6 rounded-xl shadow-lg flex flex-wrap justify-center md:justify-start gap-4 min-h-[140px]">
+            <p id="initial-message" class="text-gray-500 font-medium self-center">Python 프로그램에서 좌석 영역을 지정해주세요.</p>
+        </div>
+
+        <div id="status-message" class="mt-4 bg-red-100 p-4 rounded-xl shadow-inner border border-red-300 hidden">
+            <p class="text-red-700 font-bold text-center text-lg">⚠️ Python 프로그램 연결이 끊겼습니다.</p>
+        </div>
+        <div class="text-center text-gray-500 text-sm mt-4">
+            마지막 DB 업데이트: <span id="last-update" class="font-medium">-</span>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <script>
+        // ==========================================================================
+        // 🔴 [필수 수정] 아래 2개 항목(apiKey, appId)을 Firebase 콘솔에서 찾아 넣어주세요!
+        // ==========================================================================
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyC8AYa6AclN049zlX7aRY9NfkAmJYIJBlM",
+            authDomain: "smart-library-seat.firebaseapp.com",
+            databaseURL: "https://smart-library-seat-default-rtdb.firebaseio.com/",
+            projectId: "smart-library-seat",
+            storageBucket: "smart-library-seat.firebasestorage.app",
+            messagingSenderId: "162591039381",
+            appId: "1:162591039381:web:b16ffae3677595d46da09c",
+            measurementId: "G-YSBGS8V1PQ"
+        };
+
+        // ==========================================================================
+
+        try {
+            if (!firebase.apps.length) {
+                firebase.initializeApp(firebaseConfig);
+                console.log("Firebase 연결 시도...");
+            }
+        } catch (e) {
+            console.error("설정 오류:", e);
+            alert("Firebase 설정값이 비어있거나 잘못되었습니다. 코드를 확인해주세요.");
+        }
+        
+        const database = firebase.database();
+        const seatMap = document.getElementById('seat-map');
+        const statusMessage = document.getElementById('status-message');
+        const initialMessage = document.getElementById('initial-message');
+        
+        // 시스템 상태 수신
+        database.ref('system_status').on('value', (snapshot) => {
+            const statusData = snapshot.val() || {};
+            const isConnected = statusData.connection === 'online';
+            
+            if (isConnected) {
+                seatMap.classList.remove('opacity-50');
+                statusMessage.classList.add('hidden');
+            } else {
+                seatMap.classList.add('opacity-50');
+                statusMessage.classList.remove('hidden');
+            }
+
+            document.getElementById('last-update').innerText = statusData.last_update || '-';
+            document.getElementById('fps').innerText = statusData.fps ? statusData.fps.toFixed(2) : '0.00';
+            document.getElementById('inference-ms').innerText = statusData.inference_ms ? `${statusData.inference_ms.toFixed(2)} ms` : '0.00 ms';
+        });
+
+        // 좌석 데이터 수신
+        database.ref('seats').on('value', (snapshot) => {
+            const data = snapshot.val();
+            seatMap.innerHTML = '';
+            
+            let total = 0, occupied = 0, vacant = 0, ghost = 0;
+            
+            if (data) {
+                initialMessage.classList.add('hidden');
+                const seatIds = Object.keys(data).sort((a, b) => parseInt(a.replace('seat', '')) - parseInt(b.replace('seat', '')));
+                
+                total = seatIds.length;
+                seatIds.forEach(seatId => {
+                    const seatData = data[seatId];
+                    const status = typeof seatData === 'string' ? seatData : seatData.status || 'Vacant';
+
+                    if (status === 'Occupied') occupied++;
+                    else if (status === 'Ghost') ghost++;
+                    else vacant++;
+                    
+                    const seatDiv = document.createElement('div');
+                    let bgColor = status === 'Occupied' ? 'bg-occupied' : (status === 'Ghost' ? 'bg-ghost animate-pulse_slow' : 'bg-vacant');
+
+                    seatDiv.className = `seat ${bgColor} text-white p-3 rounded-lg shadow-md hover:shadow-xl transition-all duration-300 cursor-pointer relative flex-shrink-0 w-32 h-32 flex flex-col justify-between overflow-hidden`;
+                    seatDiv.innerHTML = `
+                        <div class="font-extrabold text-lg">좌석 ${seatId.replace(/\D/g, '')}</div>
+                        <div class="font-semibold text-sm">${status}</div>
+                        <div class="seat-info absolute inset-0 bg-gray-900 bg-opacity-90 p-3 flex flex-col justify-center items-center opacity-0 transform translate-y-full rounded-lg">
+                            <div class="font-bold mb-1">AI 모니터링</div>
+                            <div class="text-3xl font-extrabold mb-3 text-white">${status}</div>
+                             <div class="mt-2 text-yellow-400 text-xs">${status === 'Ghost' ? '장기 부재' : ''}</div>
+                        </div>
+                    `;
+                    seatMap.appendChild(seatDiv);
+                });
+            } else {
+                initialMessage.classList.remove('hidden');
+            }
+
+            const rate = total > 0 ? (((occupied + ghost) / total) * 100).toFixed(1) : 0;
+            document.getElementById('total-seats').innerText = total;
+            document.getElementById('occupied-seats').innerText = occupied;
+            document.getElementById('vacant-seats').innerText = vacant;
+            document.getElementById('ghost-seats').innerText = ghost;
+            document.getElementById('occupancy-rate').innerText = `${rate}%`;
+        });
+    </script>
+</body>
+</html>
