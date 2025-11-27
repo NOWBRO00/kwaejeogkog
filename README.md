@@ -112,10 +112,6 @@ Markdown
 
 ---
 
-## 💻 설치 및 실행 방법 (Installation & Usage)
-
-터미널(PowerShell 또는 CMD)에서 아래 순서대로 명령어를 입력하여 환경을 구성하고 실행합니다.
-
 🎮 사용 가이드 (User Guide)
 프로그램이 실행되면 웹캠 창(Live Cam)이 뜹니다.
 
@@ -126,6 +122,8 @@ Markdown
 초기화: 키보드 c를 누르면 모든 좌석 설정이 초기화됩니다.
 
 종료: 키보드 q를 누르면 프로그램이 종료되고 Firebase 연결이 해제됩니다.
+
+---
 
 📂 디렉토리 구조 (Directory Structure)
 library/
@@ -138,9 +136,7 @@ library/
 ├── seats_config.json      # 저장된 좌석 좌표 파일 (자동 생성)
 └── README.md              # 프로젝트 설명서
 
-### 1. 프로젝트 폴더로 이동
-
-cd "C:\Users\junho\library"
+---
 
 터미널 진행 단계
 cd "C:\Users\junho\library”
@@ -156,3 +152,10 @@ pip install opencv-python firebase-admin ultralytics
 python [main.py](http://main.py/)
 
 python [main.py](http://main.py/)
+
+---
+
+⚠️ 주의사항
+yolov8n.onnx, coco.names, serviceAccountKey.json 파일이 같은 폴더 내에 반드시 존재해야 합니다.
+
+웹캠이 연결되어 있어야 작동합니다.
