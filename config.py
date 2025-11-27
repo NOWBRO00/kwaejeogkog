@@ -5,7 +5,7 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) 
 
 # --- Firebase 및 시스템 설정 ---
-FIREBASE_URL = 'https://smart-library-seat-default-rtdb.firebaseio.com/'
+FIREBASE_URL = 'https://cozy-seat-default-rtdb.firebaseio.com/'
 SERVICE_ACCOUNT_KEY = os.path.join(BASE_DIR, 'serviceAccountKey.json')  
 CONFIG_FILE = os.path.join(BASE_DIR, 'config_file.json')               
 

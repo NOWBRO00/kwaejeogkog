@@ -12,9 +12,10 @@
 
 ### 🎯 핵심 기능
 1.  실시간 좌석 모니터링: 웹캠을 통해 좌석별 상태(공석/사용중)를 실시간으로 감지합니다.
-2.  유령 좌석(사유화) 탐지: 사람이 자리를 비우고 물건만 남겨둔 시간을 측정하여, 설정된 시간(예: 10분)이 지나면 'Ghost' 상태로 전환합니다.
+2.  유령 좌석(사유화) 탐지: 사람이 자리를 비우고 물건만 남겨둔 시간을 측정하여, 설정된 시간(예: 10초)이 지나면 'Ghost' 상태로 전환합니다.
 3.  정교한 객체 인식: YOLOv8 모델을 사용하여 사람(Person)과 소지품(Backpack, Laptop, Book 등)을 명확히 구분합니다.
 4.  Firebase 연동: 감지된 데이터를 실시간으로 Firebase DB에 전송하여, 모바일 앱이나 웹에서 현황을 볼 수 있습니다.
+5.  **온도/습도/소음 센서 통합**: 좌석별 온도, 습도, 소음 레벨을 자동으로 측정하고 쾌적 지수를 계산합니다.
 
 ---
 
@@ -138,24 +139,96 @@ library/
 
 ---
 
-터미널 진행 단계
-cd "C:\Users\junho\library”
+## 💻 설치 및 실행 방법
 
-pip install opencv-python numpy firebase-admin ultralytics
+### 1. 필요한 라이브러리 설치
 
-pip uninstall opencv-python numpy -y
-pip install opencv-python
+터미널(PowerShell 또는 CMD)을 열고 프로젝트 폴더로 이동한 후:
 
-python -m venv venv
-.\venv\Scripts\activate
-pip install opencv-python firebase-admin ultralytics
-python [main.py](http://main.py/)
+```bash
+cd "C:\Users\wogud\Desktop\comfortCock_cam\kwaejeogkog"
 
-python [main.py](http://main.py/)
+# 필수 라이브러리 설치
+pip install opencv-python numpy firebase-admin
+```
+
+### 2. 웹 대시보드 실행
+
+**터미널 1**에서 웹 서버 실행:
+
+```bash
+# 방법 1: 8000 포트 사용 (권장)
+python -m http.server 8000
+
+# 방법 2: 8080 포트 사용 (이미 사용 중이면 오류 발생)
+python -m http.server 8080
+```
+
+브라우저에서 접속:
+```
+http://localhost:8000  (또는 사용한 포트 번호)
+```
+
+**⚠️ 포트 오류 발생 시:**
+- 다른 포트 번호 사용 (3000, 5000, 8000 등)
+- 또는 기존 프로세스 종료 후 재시도
+
+### 3. Python 프로그램 실행
+
+**터미널 2**에서 카메라 프로그램 실행:
+
+```bash
+python main.py
+```
+
+### 4. 실행 후 사용 방법
+
+1. **웹캠 창이 열리면:**
+   - 마우스로 좌석 영역을 드래그하여 그립니다
+   - 여러 좌석을 추가할 수 있습니다
+
+2. **키보드 단축키:**
+   - **`s`**: 현재 좌석 설정을 `seats_config.json`에 저장
+   - **`c`**: 모든 좌석 설정 초기화
+   - **`q`**: 프로그램 종료
+
+3. **화면 표시 정보:**
+   - 각 좌석에 온도(°C)와 소음(dB) 레벨이 표시됩니다
+   - 소음이 60dB 이상이면 빨간색으로 표시됩니다
+   - 좌석 상태: 빨강(점유), 초록(공석), 주황(유령)
+
+### 5. Firebase 데이터 확인
+
+프로그램이 실행되면 Firebase에 다음 데이터가 자동으로 업데이트됩니다:
+- 좌석 점유 상태 (`status`, `occupancy_status`)
+- 온도 (`temp`)
+- 습도 (`hum`)
+- 소음 레벨 (`decibel`)
+- 쾌적 지수 (`DI`)
+- 쾌적 상태 (`comfort_status`)
 
 ---
 
-⚠️ 주의사항
-yolov8n.onnx, coco.names, serviceAccountKey.json 파일이 같은 폴더 내에 반드시 존재해야 합니다.
+## ⚠️ 주의사항
 
-웹캠이 연결되어 있어야 작동합니다.
+1. **필수 파일 확인:**
+   - `yolov8n.onnx` - AI 모델 파일
+   - `classes.txt` - 클래스 이름 목록 (coco.names 대신 사용)
+   - `serviceAccountKey.json` - Firebase 인증 키
+   - `config.py` - 설정 파일 (선택사항)
+
+2. **하드웨어 요구사항:**
+   - 웹캠이 연결되어 있어야 합니다
+   - Python 3.x 필요
+
+3. **Firebase 설정:**
+   - `config.py` 또는 `main.py`에서 Firebase URL을 확인하세요
+   - `serviceAccountKey.json` 파일이 올바른 위치에 있는지 확인하세요
+
+## 📊 통합된 기능
+
+### 온도/습도/소음 센서
+- 좌석별 온도, 습도, 소음 레벨 자동 생성
+- 쾌적 지수(Discomfort Index) 자동 계산
+- Firebase에 실시간 업데이트
+- 화면에 온도와 소음 레벨 표시
