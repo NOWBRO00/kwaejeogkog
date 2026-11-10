@@ -6,7 +6,7 @@
    - PowerShell 또는 CMD 실행
 
 2. 프로젝트 폴더로 이동
-   cd "C:\Users\wogud\Desktop\comfortCock_cam\kwaejeogkog"
+   cd kwaejeogkog
 
 3. 필요한 라이브러리 설치 (처음 한 번만)
    pip install opencv-python numpy firebase-admin

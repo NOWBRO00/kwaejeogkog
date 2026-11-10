@@ -5,7 +5,7 @@
 📋 준비 단계 (처음 한 번만)
 
 1. 필요한 라이브러리 설치
-   cd "C:\Users\wogud\Desktop\comfortCock_cam\kwaejeogkog"
+   cd kwaejeogkog
    pip install opencv-python numpy firebase-admin sounddevice
 
    (마이크를 사용하지 않으면 sounddevice는 선택사항)
@@ -18,7 +18,7 @@
 
 1. 터미널 열기 (PowerShell 또는 CMD)
 2. 프로젝트 폴더로 이동:
-   cd "C:\Users\wogud\Desktop\comfortCock_cam\kwaejeogkog"
+   cd kwaejeogkog
 
 3. 웹 서버 실행:
    python -m http.server 8000
@@ -36,7 +36,7 @@
 
 1. 새 터미널 창 열기 (PowerShell 또는 CMD)
 2. 프로젝트 폴더로 이동:
-   cd "C:\Users\wogud\Desktop\comfortCock_cam\kwaejeogkog"
+   cd kwaejeogkog
 
 3. Python 프로그램 실행:
    python main.py
